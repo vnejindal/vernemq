@@ -1,0 +1,90 @@
+
+########## VMQ Links ############
+
+https://docs.vernemq.com/misc/not-a-tuning-guide
+https://github.com/vernemq/vernemq/blob/master/apps/vmq_server/priv/vmq_server.schema
+https://docs.vernemq.com/configuring-vernemq/http-listeners
+
+
+
+Open Issues: 
+https://github.com/vernemq/vernemq/issues/1158
+
+
+########## VMQ Links ############
+
+### OS Commands ## 
+
+$  ethtool -i eth0 | grep ixgbevf
+ubuntu@ip-192-168-185-118:~$ ethtool -i ens5
+driver: ena
+version: 2.0.3K
+firmware-version:
+expansion-rom-version:
+bus-info: 0000:00:05.0
+supports-statistics: yes
+supports-test: no
+supports-eeprom-access: no
+supports-register-dump: no
+supports-priv-flags: no
+
+the instance uses the native ena driver, this looks ok
+
+$ cat /proc/interrupts
+
+$ output of `for i in 26 27 28 29 30 31 32 33; do echo -n "$i": ; cat /proc/irq/$i/smp_affinity; done`
+26:0,00000100
+27:0,00000080
+28:0,00000040
+29:0,00000020
+30:0,00000010
+31:0,00000008
+32:0,00000004
+33:0,00000002
+
+
+### OS Commands ## 
+
+## Erlang Shell commands ##
+
+recon:proc_window(reductions, 10, 1000).
+recon:proc_window(message_queue_len, 10, 1000).
+
+
+### Tips and Tweaks ###
+
+1. What is the `erlang.distribution_buffer_size` in `vernemq.conf` or equivalent in `vm.args` `+zdbbl`, It might make sense to increase it to a larger value like 32MB
+Answer: 
+
+2. How to look for scheduler metrics and see if erlang is busy waiting ?
+Answer: 
+
+vmq-admin metrics show 
+
+on the Scheduler CPU use: looking at the gauges in the metrics like `gauge.system_utilization_scheduler_4 = 18` you should have a quick estimation of how the schedulers are doing and see whether this is a lot different than what htop shows
+
+this is a gauge part of the metrics. there is one of for each scheduler (1 scheduler per cpu). if you compare those values with what htop shows and they are lower, then the Erlang VM has actual headroom for more work
+
+3.  how can we disallow vernemq to use perticular cpu
+ Answer: http://erlang.org/doc/man/erl.html#+sct
+
+4. We'll introduce a new feature that allow to have different TCP Buffer Sizes / Listener... This would allow to have large TCP Buffers for the Subscribers but keep small Buffers for the Publishers... I think this is another thing which we have to tune in your case, but let's first look at the other stuff
+
+5. the queue_fun.awk script is in the same folder as the crash_dump analizer script which you seem to be running on the dump file
+seen this line `ubuntu@ip-192-168-17-73:~/analizer/recon-master/script$ sudo ./erl_crashdump_analyzer.sh /var/log/vernemq/erl_crash.dump` 
+in the same script folder
+or if you want to run analyse dump on your local computer, clone recon from here: https://github.com/ferd/recon/tree/master/script
+
+
+o you have the recon scripts? could you run the queue_fun.awk script over the erl_crash.dump?
+like the recon author recommends it, hold on i'm searching for it
+this one: awk -v threshold=10000 -f queue_fun.awk /path/to/erl_crash.dump
+
+6. swc brodcast param in advanced.config 
+
+regarding turning swc broadcast off then this is to lower metadata overhead. With swc broadcast turned on, then for each new client and subscription the metadata (the client is connectd to node N with subscriptions S1, S2,...) is broadcast immediately to other nodes. Metadata is also exchanged via background replication (in case some nodes missed some data for some reason), so the idea to turn it off is to simply let metadata propagate via background replication which is less noisy than broadcast, but also takes longer. In your case that metadata arrives later isn't terribly important as you anyway consume data locally via the shared subscribers
+
+7. coordinate_registrations parameter in vernemq.config 
+oh, yes, sorry forgot to answer those. The MQTT spec says that if a client connects with the client-id and another client is already using this, then we should disconnect the old client. We normally enforce this by synchronously going to the node and disconnect the client. If coordinated_registrations are turned off, we don't do this synchonously, but let the eventualy concistency take care of it. This is much faster, with the caveat that an existing client session might be terminated a bit later - this is in most cases ok as the old session is anyway stale (the server hadn't noticed that the client was gone before it reconnected). So basically disabling coordinated_registrations replaces a synchronous action with an async one.
+
+
